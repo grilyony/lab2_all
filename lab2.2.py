@@ -2,6 +2,7 @@ import random
 import math
 import matplotlib.pyplot as plt
 import numpy as np
+from multiprocessing import Pool
 import time
 import cmath
 # import pickle
@@ -70,14 +71,14 @@ def write_file(content, file_name="time.txt"):
 
 
 def discrete_fourier(signal):
-    start = time.time()
+    start = time.perf_counter_ns()
     N = len(signal)
     spectre = np.zeros(N, dtype=np.complex64)
     for p in range(N):
         spectre[p] = np.dot(signal, np.cos(2 * math.pi * p / N * np.linspace(0, N - 1, N))) \
                      - 1j * np.dot(signal, np.sin(2 * math.pi * p / N * np.linspace(0, N - 1, N)))
-    print(f"Execution time (DFT): {time.time() - start}")
-    return spectre
+    # print(f"Execution time (DFT): {time.time() - start}")
+    return spectre, time.perf_counter_ns() - start
 
 
 signal = generate_values(10, 256, 900)
@@ -85,7 +86,7 @@ fig, axs = plt.subplots(2, 2)
 
 # Дискретне перетворення Фур'є:
 
-spectr = discrete_fourier(signal)
+spectr, _ = discrete_fourier(signal)
 polar_spectr = np.array(list(map(lambda x: cmath.polar(x), spectr)))
 ampl = draw(polar_spectr[:, 0], "p", "A(p)", "DFT", "Amplitude", axs[0, 0])
 axs[0, 0].legend(handles=[ampl], loc='upper right')
@@ -100,7 +101,7 @@ axs[0, 1].grid()
 
 
 def fast_fourier(signal):
-    start = time.time()
+    start = time.perf_counter_ns()
     N = len(signal)
     spectre = np.zeros(N, dtype=np.complex64)
     for p in range(N // 2):
@@ -124,11 +125,11 @@ def fast_fourier(signal):
 
         spectre[p] = E_m + W_p * O_m
         spectre[p + N // 2] = E_m - W_p * O_m
-    print(f"Execution time (FFT): {time.time() - start}")
-    return spectre
+    # print(f"Execution time (FFT): {time.time() - start}")
+    return spectre, time.perf_counter_ns() - start
 
 
-spectr = fast_fourier(signal)
+spectr, _ = fast_fourier(signal)
 polar_spectr = np.array(list(map(lambda x: cmath.polar(x), spectr)))
 ampl = draw(polar_spectr[:, 0], "p", "A(p)", "FFT", "Amplitude", axs[1, 0])
 axs[1, 0].legend(handles=[ampl], loc='upper right')
@@ -137,4 +138,57 @@ axs[1, 0].grid()
 phase = draw(polar_spectr[:, 1], "p", "Phi(p)", "FFT", "Phase", axs[1, 1])
 axs[1, 1].legend(handles=[phase], loc='upper right')
 axs[1, 1].grid()
+plt.show()
+
+
+def fast_fourier_parallel(signal):
+    start = time.perf_counter_ns()
+    p = Pool(2)
+    parts = (signal[::2], signal[1::2])
+    N = len(signal)
+    even, odd = p.map(fft_part, parts)
+    coefs = np.exp(-2j * np.pi * np.arange(N) / N)
+    return np.concatenate([even + coefs[:N // 2] * odd,
+                           even + coefs[N // 2:] * odd]), time.perf_counter_ns() - start
+
+
+def fft_part(signal):
+    n = len(signal)
+    p = np.arange(n)
+    k = p.reshape((n, 1))
+    w = np.exp(-2j * np.pi * p * k / n)
+    return np.dot(w, signal)
+
+
+fig, axs = plt.subplots(1, 2)
+fig.suptitle("Parallel Fast Fourier Transform", fontsize=16)
+spectr, _ = fast_fourier_parallel(signal)
+polar_spectr = np.array(list(map(lambda x: cmath.polar(x), spectr)))
+ampl = draw(polar_spectr[:, 0], "p", "A(p)", "Polar Spectr", "Amplitude", axs[0])
+axs[0].legend(handles=[ampl], loc='upper right')
+axs[0].grid()
+
+phase = draw(polar_spectr[:, 1], "p", "Phi(p)", "Polar Spectr", "Phase", axs[1])
+axs[1].legend(handles=[phase], loc='upper right')
+axs[1].grid()
+plt.show()
+
+n = 10
+time_dft, time_fft, time_fft_parts = (np.zeros(n), np.zeros(n), np.zeros(n))
+for i in range(n):
+    for _ in range(3):
+        signal = generate_values(6, (i + 1) * 256, 2100)
+        time_dft[i] = discrete_fourier(signal)[1]
+        time_fft[i] = fast_fourier(signal)[1]
+        time_fft_parts[i] = fast_fourier_parallel(signal)[1]
+
+time_dft /= 3
+time_fft /= 3
+time_fft_parts /= 3
+dft_l, = plt.plot(range(256, 256 * n + 1, 256), time_dft, label="dft")
+fft_l, = plt.plot(range(256, 256 * n + 1, 256), time_fft, label="fft")
+fft_parallel_l, = plt.plot(range(256, 256 * n + 1, 256), time_fft_parts, label="fft_parallel")
+plt.legend(handles=[dft_l, fft_l, fft_parallel_l])
+plt.xlabel("N")
+plt.ylabel("Nanoseconds")
 plt.show()
